@@ -16,7 +16,7 @@ package main
 import (
 	"context"
 	"errors"
-
+	"fmt"
 	pipelinev1beta1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/apis/resolution/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/resolution/common"
@@ -27,9 +27,11 @@ import (
 )
 
 const ArchParam = "arch"
+const ConfigMapName = "bundleresolver-config"
 
 func main() {
 	ctx := filteredinformerfactory.WithSelectors(context.Background(), v1beta1.ManagedByLabelKey)
+
 	sharedmain.MainWithContext(ctx, "controller",
 		framework.NewController(ctx, &resolver{}),
 
@@ -58,6 +60,11 @@ func (r *resolver) GetSelector(context.Context) map[string]string {
 	}
 }
 
+// GetConfigName returns the name of the bundle resolver's configmap.
+func (r *resolver) GetConfigName(context.Context) string {
+	return ConfigMapName
+}
+
 // ValidateParams ensures parameters from a request are as expected.
 func (r *resolver) ValidateParams(ctx context.Context, params []pipelinev1beta1.Param) error {
 	arch, bundleParams := extractParams(params)
@@ -71,6 +78,27 @@ func (r *resolver) ValidateParams(ctx context.Context, params []pipelinev1beta1.
 func (r *resolver) Resolve(ctx context.Context, params []pipelinev1beta1.Param) (framework.ResolvedResource, error) {
 	arch, bundleParams := extractParams(params)
 	println(arch)
+
+	conf := framework.GetResolverConfigFromContext(ctx)
+
+	paramsMap := make(map[string]pipelinev1beta1.ParamValue)
+	for _, p := range params {
+		paramsMap[p.Name] = p.Value
+	}
+
+	saVal, ok := paramsMap[bundle.ParamServiceAccount]
+	sa := ""
+	if !ok || saVal.StringVal == "" {
+		if saString, ok := conf[bundle.ConfigServiceAccount]; ok {
+			sa = saString
+		} else {
+			return nil, fmt.Errorf("default Service Account was not set during installation of the multi-arch resolver")
+		}
+	} else {
+		sa = saVal.StringVal
+	}
+	bundleParams = append(bundleParams, pipelinev1beta1.Param{Name: bundle.ParamServiceAccount, Value: pipelinev1beta1.ParamValue{StringVal: sa}})
+
 	bundleResult, err := r.bundleResolver.Resolve(ctx, bundleParams)
 	if err != nil {
 		return bundleResult, err
