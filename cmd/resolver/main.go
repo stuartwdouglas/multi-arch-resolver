@@ -116,11 +116,7 @@ func (r *resolver) Resolve(ctx context.Context, params []pipelinev1beta1.Param) 
 		return nil, err
 	}
 
-	for i := range task.Spec.Steps {
-		if task.Spec.Steps[i].Script != "" {
-			task.Spec.Steps[i].Script += "\necho THIS IS A REMOTE RESOLVED TASK"
-		}
-	}
+	convertToSsh(&task)
 
 	println("Data: " + task.Spec.Steps[0].Name)
 	codec := serializer.NewCodecFactory(decodingScheme).LegacyCodec(pipelinev1beta1.SchemeGroupVersion)
@@ -169,4 +165,47 @@ func (r *resolvedResource) Annotations() map[string]string {
 // file came from including the url, digest and the entrypoint. None atm.
 func (r *resolvedResource) RefSource() *pipelinev1beta1.RefSource {
 	return r.refSource
+}
+
+//script
+//set 1 sets up the ssh server
+
+func convertToSsh(task *pipelinev1beta1.Task) string {
+
+	podmanArgs := ""
+
+	ret := `
+#!/bin/bash
+export SSH_HOST=ec2-user@ec2-3-88-145-176.compute-1.amazonaws.com
+export SSH_ARGS=""
+export BUILD_ID=$(uuid)
+export BUILD_DIR=/tmp/fakebuild
+rm -rf $BUILD_DIR
+mkdir -p scripts
+ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
+	//before the build we sync the contents of the workspace to the remote host
+	for _, workspace := range task.Spec.Workspaces {
+		ret += "\nrsync $SSH_ARGS -ra $(workspaces." + workspace.Name + ".path) $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name
+		podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":/$(workspaces." + workspace.Name + ".path):Z "
+	}
+	for _, step := range task.Spec.Steps {
+		script := "scripts/script-" + step.Name + ".sh"
+
+		ret += "\ncat >" + script + " <<REMOTESSHEOF\n"
+		ret += step.Script
+		ret += "\nREMOTESSHEOF"
+		ret += "\nchmod +x " + script
+		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run -v /tmp/fakebuild:/script:Z --user=0  " + task.Spec.Steps[0].Image + "  "
+	}
+	ret += "\nrsync $SSH_ARGS -ra scripts $SSH_HOST:$BUILD_DIR"
+	for _, step := range task.Spec.Steps {
+		script := "/script/script-" + step.Name + ".sh"
+		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + task.Spec.Steps[0].Image + "  " + script
+	}
+
+	//sync the contents of the workspaces back so subsequent tasks can use them
+	for _, workspace := range task.Spec.Workspaces {
+		ret += "\nrsync $SSH_ARGS -ra $SSH_HOST:$BUILD_DIR/workspaces/ $(workspaces." + workspace.Name + ".path) " + workspace.Name
+	}
+	return ret
 }
