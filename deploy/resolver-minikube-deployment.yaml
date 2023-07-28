@@ -14,17 +14,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: demoresolver
+  name: multi-arch-resolver
   namespace: tekton-pipelines-resolvers
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: demoresolver
+      app: multi-arch-resolver
   template:
     metadata:
       labels:
-        app: demoresolver
+        app: multi-arch-resolver
     spec:
       affinity:
         podAntiAffinity:
@@ -32,7 +32,7 @@ spec:
           - podAffinityTerm:
               labelSelector:
                 matchLabels:
-                  app: demoresolver
+                  app: multi-arch-resolver
               topologyKey: kubernetes.io/hostname
             weight: 100
       serviceAccountName: tekton-pipelines-resolvers

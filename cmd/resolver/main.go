@@ -22,6 +22,9 @@ import (
 	"github.com/tektoncd/pipeline/pkg/resolution/common"
 	"github.com/tektoncd/pipeline/pkg/resolution/resolver/bundle"
 	"github.com/tektoncd/pipeline/pkg/resolution/resolver/framework"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection/sharedmain"
 )
@@ -34,7 +37,6 @@ func main() {
 
 	sharedmain.MainWithContext(ctx, "controller",
 		framework.NewController(ctx, &resolver{}),
-
 	)
 }
 
@@ -103,10 +105,31 @@ func (r *resolver) Resolve(ctx context.Context, params []pipelinev1beta1.Param) 
 	if err != nil {
 		return bundleResult, err
 	}
-	println("Data: " + string(bundleResult.Data()))
 
+	decodingScheme := runtime.NewScheme()
+	utilruntime.Must(pipelinev1beta1.AddToScheme(decodingScheme))
+	decoderCodecFactory := serializer.NewCodecFactory(decodingScheme)
+	decoder := decoderCodecFactory.UniversalDecoder(pipelinev1beta1.SchemeGroupVersion)
+	task := pipelinev1beta1.Task{}
+	err = runtime.DecodeInto(decoder, bundleResult.Data(), &task)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range task.Spec.Steps {
+		if task.Spec.Steps[i].Script != "" {
+			task.Spec.Steps[i].Script += "\necho THIS IS A REMOTE RESOLVED TASK"
+		}
+	}
+
+	println("Data: " + task.Spec.Steps[0].Name)
+	codec := serializer.NewCodecFactory(decodingScheme).LegacyCodec(pipelinev1beta1.SchemeGroupVersion)
+	output, err := runtime.Encode(codec, &task)
+	if err != nil {
+		return nil, err
+	}
 	return &resolvedResource{
-		data:        bundleResult.Data(),
+		data:        output,
 		annotations: bundleResult.Annotations(),
 		refSource:   bundleResult.RefSource(),
 	}, nil
