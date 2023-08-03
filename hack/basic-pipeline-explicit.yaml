@@ -1,0 +1,46 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: basic-
+spec:
+  pipelineSpec:
+      tasks:
+        - name: test
+          taskSpec:
+            steps:
+              - computeResources: { }
+                image: quay.io/sdouglas/registry:multiarch
+                imagePullPolicy: Always
+                name: run-remote-build
+                script: |
+                  #!/bin/bash
+                  mkdir ~/.ssh
+                  cp /ssh/id_rsa ~/.ssh
+                  chmod 0400 ~/.ssh/id_rsa
+                  
+                  export SSH_HOST=ec2-user@ec2-44-211-78-24.compute-1.amazonaws.com
+                  export SSH_ARGS="-o StrictHostKeyChecking=no"
+                  export BUILD_ID=tmpbuildid
+                  export BUILD_DIR=/tmp/fakebuild
+                  rm -rf $BUILD_DIR
+                  mkdir -p scripts
+                  ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts
+                  cat >scripts/script-hellp.sh <<REMOTESSHEOF
+                  #!/bin/sh
+                  echo \"Hello World!\"
+                  REMOTESSHEOF
+                  chmod +x scripts/script-hellp.sh
+                  ssh $SSH_ARGS $SSH_HOST podman  run -v /tmp/fakebuild:/script:Z --user=0  ubuntu  
+                  rsync -ra scripts $SSH_HOST:$BUILD_DIR
+                  ssh $SSH_ARGS $SSH_HOST podman  run  -v $BUILD_DIR/scripts:/script:Z --user=0  ubuntu  /script/script-hellp.sh
+                securityContext:
+                  runAsUser: 0
+                volumeMounts:
+                  - mountPath: /ssh
+                    name: ssh
+            volumes:
+              - name: ssh
+                secret:
+                  secretName: ssh
+
+

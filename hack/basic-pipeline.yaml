@@ -1,0 +1,20 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: basic-
+spec:
+  pipelineSpec:
+      tasks:
+        - name: test
+          taskRef:
+            kind: Task
+            params:
+              - name: bundle
+                value: docker.io/ptasci67/example-oci@sha256:053a6cb9f3711d4527dd0d37ac610e8727ec0288a898d5dfbd79b25bcaa29828
+              - name: name
+                value: hello-world
+              - name: kind
+                value: task
+              - name: arch
+                value: amd64
+            resolver: multi-arch-bundle

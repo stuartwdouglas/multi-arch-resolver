@@ -9,5 +9,4 @@ docker push quay.io/${QUAY_USERNAME}/multi-arch-resolver:dev
 kubectl apply -f $DIR/resolver-openshift-deployment.yaml
 kubectl rollout restart deployment -n openshift-pipelines multi-arch-resolver
 
-
-kubectl create -f $DIR/test-resolver-template.yaml
+sleep 10

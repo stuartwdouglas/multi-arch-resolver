@@ -22,11 +22,13 @@ import (
 	"github.com/tektoncd/pipeline/pkg/resolution/common"
 	"github.com/tektoncd/pipeline/pkg/resolution/resolver/bundle"
 	"github.com/tektoncd/pipeline/pkg/resolution/resolver/framework"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection/sharedmain"
+	"strings"
 )
 
 const ArchParam = "arch"
@@ -174,38 +176,75 @@ func convertToSsh(task *pipelinev1beta1.Task) string {
 
 	podmanArgs := ""
 
-	ret := `
-#!/bin/bash
-export SSH_HOST=ec2-user@ec2-3-88-145-176.compute-1.amazonaws.com
-export SSH_ARGS=""
-export BUILD_ID=$(uuid)
+	ret := `#!/bin/bash
+set -o verbose
+mkdir ~/.ssh
+cp /ssh/id_rsa ~/.ssh
+chmod 0400 ~/.ssh/id_rsa
+export SSH_HOST=ec2-user@ec2-44-211-78-24.compute-1.amazonaws.com
+export SSH_ARGS="-o StrictHostKeyChecking=no"
+export BUILD_ID=tmpbuildid
 export BUILD_DIR=/tmp/fakebuild
 rm -rf $BUILD_DIR
 mkdir -p scripts
-ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
+ssh -o StrictHostKeyChecking=no $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
 	//before the build we sync the contents of the workspace to the remote host
 	for _, workspace := range task.Spec.Workspaces {
-		ret += "\nrsync $SSH_ARGS -ra $(workspaces." + workspace.Name + ".path) $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name
+		ret += "\nrsync -ra $(workspaces." + workspace.Name + ".path) $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name
 		podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":/$(workspaces." + workspace.Name + ".path):Z "
 	}
 	for _, step := range task.Spec.Steps {
 		script := "scripts/script-" + step.Name + ".sh"
 
-		ret += "\ncat >" + script + " <<REMOTESSHEOF\n"
+		ret += "\ncat >" + script + " <<'REMOTESSHEOF'\n"
+		if !strings.HasPrefix(step.Script, "#!") {
+			ret += "#!/bin/sh\n"
+		}
 		ret += step.Script
 		ret += "\nREMOTESSHEOF"
 		ret += "\nchmod +x " + script
-		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run -v /tmp/fakebuild:/script:Z --user=0  " + task.Spec.Steps[0].Image + "  "
 	}
-	ret += "\nrsync $SSH_ARGS -ra scripts $SSH_HOST:$BUILD_DIR"
+	ret += "\nrsync -ra scripts $SSH_HOST:$BUILD_DIR"
 	for _, step := range task.Spec.Steps {
 		script := "/script/script-" + step.Name + ".sh"
-		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + task.Spec.Steps[0].Image + "  " + script
+		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run --rm " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + replaceImage(step.Image) + "  " + script
 	}
 
 	//sync the contents of the workspaces back so subsequent tasks can use them
 	for _, workspace := range task.Spec.Workspaces {
-		ret += "\nrsync $SSH_ARGS -ra $SSH_HOST:$BUILD_DIR/workspaces/ $(workspaces." + workspace.Name + ".path) " + workspace.Name
+		ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/ $(workspaces." + workspace.Name + ".path) "
+	}
+
+	task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
+		Name: "ssh",
+		VolumeSource: v1.VolumeSource{
+			Secret: &v1.SecretVolumeSource{
+				SecretName: "ssh",
+			},
+		},
+	})
+	task.Spec.Steps = []pipelinev1beta1.Step{
+		{
+			Name:            "run-remote-build",
+			Image:           "quay.io/sdouglas/registry:multiarch",
+			ImagePullPolicy: v1.PullAlways,
+			Script:          ret,
+			SecurityContext: &v1.SecurityContext{RunAsUser: new(int64)},
+			VolumeMounts: []v1.VolumeMount{
+				{
+					Name:      "ssh",
+					ReadOnly:  true,
+					MountPath: "/ssh",
+				},
+			},
+		},
 	}
 	return ret
+}
+
+func replaceImage(image string) string {
+	if image == "quay.io/redhat-appstudio/buildah:v1.28" {
+		return "quay.io/buildah/stable:v1.28"
+	}
+	return image
 }

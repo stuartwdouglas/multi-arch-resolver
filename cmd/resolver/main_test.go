@@ -12,7 +12,7 @@ import (
 
 func TestExampleTask(t *testing.T) {
 	task := pipelinev1beta1.Task{}
-	streamFileYamlToTektonObj("../../hack/basic.yaml", &task)
+	streamFileYamlToTektonObj("../../hack/buildah.yaml", &task)
 
 	println(convertToSsh(&task))
 	println("\n")
