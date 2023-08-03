@@ -187,10 +187,14 @@ export BUILD_ID=tmpbuildid
 export BUILD_DIR=/tmp/fakebuild
 rm -rf $BUILD_DIR
 mkdir -p scripts
-ssh -o StrictHostKeyChecking=no $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
+ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUILD_DIR/volumes`
 	//before the build we sync the contents of the workspace to the remote host
 	for _, workspace := range task.Spec.Workspaces {
-		ret += "\nrsync -ra $(workspaces." + workspace.Name + ".path) $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name
+		ret += "\nrsync -ra $(workspaces." + workspace.Name + ".path)/ $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/"
+		podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":/$(workspaces." + workspace.Name + ".path):Z "
+	}
+	for _, workspace := range task.Spec.Volumes {
+		ret += "\nssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/volumes/" + workspace.Name
 		podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":/$(workspaces." + workspace.Name + ".path):Z "
 	}
 	for _, step := range task.Spec.Steps {
@@ -198,21 +202,36 @@ ssh -o StrictHostKeyChecking=no $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspa
 
 		ret += "\ncat >" + script + " <<'REMOTESSHEOF'\n"
 		if !strings.HasPrefix(step.Script, "#!") {
-			ret += "#!/bin/sh\n"
+			ret += "#!/bin/sh\nset -o verbose\n"
+		}
+		if step.WorkingDir != "" {
+			ret += "cd " + step.WorkingDir + " && ls -l\n"
+
 		}
 		ret += step.Script
 		ret += "\nREMOTESSHEOF"
 		ret += "\nchmod +x " + script
 	}
+
+	taskEnv := ""
+	if task.Spec.StepTemplate != nil {
+		for _, e := range task.Spec.StepTemplate.Env {
+			taskEnv += " -e " + e.Name + "=" + e.Value + " "
+		}
+	}
 	ret += "\nrsync -ra scripts $SSH_HOST:$BUILD_DIR"
 	for _, step := range task.Spec.Steps {
 		script := "/script/script-" + step.Name + ".sh"
-		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run --rm " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + replaceImage(step.Image) + "  " + script
+		env := taskEnv
+		for _, e := range step.Env {
+			env += " -e " + e.Name + "=" + e.Value + " "
+		}
+		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run " + env + " --rm " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + replaceImage(step.Image) + "  " + script
 	}
 
 	//sync the contents of the workspaces back so subsequent tasks can use them
 	for _, workspace := range task.Spec.Workspaces {
-		ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/ $(workspaces." + workspace.Name + ".path) "
+		ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/ $(workspaces." + workspace.Name + ".path)/ "
 	}
 
 	task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
