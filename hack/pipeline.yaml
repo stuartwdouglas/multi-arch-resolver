@@ -238,7 +238,7 @@ spec:
               - name: kind
                 value: task
               - name: arch
-                value: amd64
+                value: arm64
             resolver: multi-arch-bundle
           when:
             - input: $(tasks.init.results.build)
