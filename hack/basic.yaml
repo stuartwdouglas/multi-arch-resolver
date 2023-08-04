@@ -14,3 +14,7 @@ spec:
       script: |
         #!/usr/bin/env bash
         echo "Sample Task"
+  volumes:
+    - secret:
+        name: non-existant
+      name: varlibcontainers

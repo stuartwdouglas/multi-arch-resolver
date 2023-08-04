@@ -172,11 +172,16 @@ func (r *resolvedResource) RefSource() *pipelinev1beta1.RefSource {
 //script
 //set 1 sets up the ssh server
 
-func convertToSsh(task *pipelinev1beta1.Task) string {
+func convertToSsh(task *pipelinev1beta1.Task) {
 
-	podmanArgs := ""
+	for stepPod := range task.Spec.Steps {
+		step := task.Spec.Steps[stepPod]
+		if step.Name != "build" { //TODO: HARD CODED HACK
+			continue
+		}
+		podmanArgs := ""
 
-	ret := `#!/bin/bash
+		ret := `#!/bin/bash
 set -o verbose
 mkdir ~/.ssh
 cp /ssh/id_rsa ~/.ssh
@@ -188,16 +193,15 @@ export BUILD_DIR=/tmp/fakebuild
 rm -rf $BUILD_DIR
 mkdir -p scripts
 ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUILD_DIR/volumes`
-	//before the build we sync the contents of the workspace to the remote host
-	for _, workspace := range task.Spec.Workspaces {
-		ret += "\nrsync -ra $(workspaces." + workspace.Name + ".path)/ $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/"
-		podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":/$(workspaces." + workspace.Name + ".path):Z "
-	}
-	for _, workspace := range task.Spec.Volumes {
-		ret += "\nssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/volumes/" + workspace.Name
-		podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":/$(workspaces." + workspace.Name + ".path):Z "
-	}
-	for _, step := range task.Spec.Steps {
+		//before the build we sync the contents of the workspace to the remote host
+		for _, workspace := range task.Spec.Workspaces {
+			ret += "\nrsync -ra $(workspaces." + workspace.Name + ".path)/ $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/"
+			podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":$(workspaces." + workspace.Name + ".path):Z "
+		}
+		for _, volume := range step.VolumeMounts {
+			ret += "\nrsync -ra " + volume.MountPath + "/ $SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/"
+			podmanArgs += " -v $BUILD_DIR/volumes/" + volume.Name + ":/" + volume.MountPath + ":Z "
+		}
 		script := "scripts/script-" + step.Name + ".sh"
 
 		ret += "\ncat >" + script + " <<'REMOTESSHEOF'\n"
@@ -211,27 +215,37 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUIL
 		ret += step.Script
 		ret += "\nREMOTESSHEOF"
 		ret += "\nchmod +x " + script
-	}
 
-	taskEnv := ""
-	if task.Spec.StepTemplate != nil {
-		for _, e := range task.Spec.StepTemplate.Env {
-			taskEnv += " -e " + e.Name + "=" + e.Value + " "
+		taskEnv := ""
+		if task.Spec.StepTemplate != nil {
+			for _, e := range task.Spec.StepTemplate.Env {
+				taskEnv += " -e " + e.Name + "=" + e.Value + " "
+			}
 		}
-	}
-	ret += "\nrsync -ra scripts $SSH_HOST:$BUILD_DIR"
-	for _, step := range task.Spec.Steps {
-		script := "/script/script-" + step.Name + ".sh"
-		env := taskEnv
-		for _, e := range step.Env {
-			env += " -e " + e.Name + "=" + e.Value + " "
+		ret += "\nrsync -ra scripts $SSH_HOST:$BUILD_DIR"
+		for _, step := range task.Spec.Steps {
+			script := "/script/script-" + step.Name + ".sh"
+			env := taskEnv
+			for _, e := range step.Env {
+				env += " -e " + e.Name + "=" + e.Value + " "
+			}
+			ret += "\nssh $SSH_ARGS $SSH_HOST podman  run " + env + " --rm " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + replaceImage(step.Image) + "  " + script
 		}
-		ret += "\nssh $SSH_ARGS $SSH_HOST podman  run " + env + " --rm " + podmanArgs + " -v $BUILD_DIR/scripts:/script:Z --user=0  " + replaceImage(step.Image) + "  " + script
-	}
 
-	//sync the contents of the workspaces back so subsequent tasks can use them
-	for _, workspace := range task.Spec.Workspaces {
-		ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/ $(workspaces." + workspace.Name + ".path)/ "
+		//sync the contents of the workspaces back so subsequent tasks can use them
+		for _, workspace := range task.Spec.Workspaces {
+			ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/ $(workspaces." + workspace.Name + ".path)/ "
+		}
+		for _, volume := range step.VolumeMounts {
+			ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/ " + volume.MountPath + "/"
+		}
+		step.Image = "quay.io/sdouglas/registry:multiarch"
+		step.ImagePullPolicy = v1.PullAlways
+		step.VolumeMounts = append(step.VolumeMounts, v1.VolumeMount{
+			Name:      "ssh",
+			ReadOnly:  true,
+			MountPath: "/ssh",
+		})
 	}
 
 	task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
@@ -242,23 +256,6 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUIL
 			},
 		},
 	})
-	task.Spec.Steps = []pipelinev1beta1.Step{
-		{
-			Name:            "run-remote-build",
-			Image:           "quay.io/sdouglas/registry:multiarch",
-			ImagePullPolicy: v1.PullAlways,
-			Script:          ret,
-			SecurityContext: &v1.SecurityContext{RunAsUser: new(int64)},
-			VolumeMounts: []v1.VolumeMount{
-				{
-					Name:      "ssh",
-					ReadOnly:  true,
-					MountPath: "/ssh",
-				},
-			},
-		},
-	}
-	return ret
 }
 
 func replaceImage(image string) string {
