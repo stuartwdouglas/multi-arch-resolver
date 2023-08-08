@@ -230,16 +230,7 @@ spec:
             - prefetch-dependencies
           taskRef:
             kind: Task
-            params:
-              - name: name
-                value: buildah
-              - name: bundle
-                value: quay.io/redhat-appstudio-tekton-catalog/task-buildah:0.1@sha256:e6d6d86b1e5587a1f82da722c216a065eef96952d44d64b5f5a3d2fe1c726c96
-              - name: kind
-                value: task
-              - name: arch
-                value: arm64
-            resolver: multi-arch-bundle
+            name: buildah-remote
           when:
             - input: $(tasks.init.results.build)
               operator: in

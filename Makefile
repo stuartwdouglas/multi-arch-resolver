@@ -25,7 +25,7 @@ test: fmt vet ## Run tests.
 	go test -v ./cmd/... -coverprofile cover.out
 
 build:
-	env GOOS=linux GOARCH=amd64 go build -mod=vendor -o out/multi-arch-resolver ./cmd/resolver
+	env GOOS=linux GOARCH=arm64 go build -mod=vendor -o out/multi-arch-resolver ./cmd/resolver
 
 clean:
 	rm -rf out

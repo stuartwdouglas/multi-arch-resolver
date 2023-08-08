@@ -181,28 +181,22 @@ func convertToSsh(task *pipelinev1beta1.Task) {
 		}
 		podmanArgs := ""
 
-		ret := `#!/bin/bash
-set -o verbose
-mkdir ~/.ssh
+		ret := `set -o verbose
+mkdir -p ~/.ssh
 cp /ssh/id_rsa ~/.ssh
 chmod 0400 ~/.ssh/id_rsa
-export SSH_HOST=ec2-user@ec2-44-211-78-24.compute-1.amazonaws.com
+export SSH_HOST=ec2-user@ec2-44-202-128-18.compute-1.amazonaws.com
 export SSH_ARGS="-o StrictHostKeyChecking=no"
 export BUILD_ID=tmpbuildid
 export BUILD_DIR=/tmp/fakebuild
 mkdir -p scripts
 ssh $SSH_ARGS $SSH_HOST sudo rm -r $BUILD_DIR
-ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUILD_DIR/volumes/tekton-workspace`
+ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
 		//before the build we sync the contents of the workspace to the remote host
 		for _, workspace := range task.Spec.Workspaces {
 			ret += "\nrsync -ra $(workspaces." + workspace.Name + ".path)/ $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/"
 			podmanArgs += " -v $BUILD_DIR/workspaces/" + workspace.Name + ":$(workspaces." + workspace.Name + ".path):Z "
 		}
-		for _, volume := range step.VolumeMounts {
-			ret += "\nrsync -ra " + volume.MountPath + "/ $SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/"
-			podmanArgs += " -v $BUILD_DIR/volumes/" + volume.Name + ":/" + volume.MountPath + ":Z "
-		}
-		podmanArgs += " -v $BUILD_DIR/volumes/tekton-workspace:/workspace:Z "
 		script := "scripts/script-" + step.Name + ".sh"
 
 		ret += "\ncat >" + script + " <<'REMOTESSHEOF'\n"
@@ -214,6 +208,7 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUIL
 
 		}
 		ret += step.Script
+		ret += "\nbuildah push $IMAGE oci:rhtap-final-image"
 		ret += "\nREMOTESSHEOF"
 		ret += "\nchmod +x " + script
 
@@ -233,14 +228,13 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUIL
 
 		//sync the contents of the workspaces back so subsequent tasks can use them
 		for _, workspace := range task.Spec.Workspaces {
-			ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/ $(workspaces." + workspace.Name + ".path)/ "
+			ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/ $(workspaces." + workspace.Name + ".path)/"
 		}
-		for _, volume := range step.VolumeMounts {
-			ret += "\nssh $SSH_ARGS $SSH_HOST sudo chmod -R u+r $BUILD_DIR/volumes/" + volume.Name
-			ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/ " + volume.MountPath + "/"
-		}
-		ret += "\nrsync -ra $SSH_HOST:$BUILD_DIR/volumes/tekton-workspace/ /workspace/"
-		ret += "\ntrue"
+		ret += "\nbuildah pull oci:rhtap-final-image"
+		ret += "\nbuildah images"
+		ret += "\nbuildah tag localhost/rhtap-final-image $IMAGE"
+		ret += "\ncontainer=$(buildah from --pull-never $IMAGE)\nbuildah mount $container | tee /workspace/container_path\necho $container > /workspace/container_name"
+
 		step.Script = ret
 		step.Image = "quay.io/sdouglas/registry:multiarch"
 		step.ImagePullPolicy = v1.PullAlways
@@ -256,6 +250,7 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts $BUIL
 		//})
 	}
 
+	task.Name = "buildah-remote"
 	task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
 		Name: "ssh",
 		VolumeSource: v1.VolumeSource{

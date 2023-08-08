@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	pipelinev1beta1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/cli-runtime/pkg/printers"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,11 +14,18 @@ import (
 
 func TestExampleTask(t *testing.T) {
 	task := pipelinev1beta1.Task{}
-	streamFileYamlToTektonObj("../../hack/buildah.yaml", &task)
+	streamFileYamlToTektonObj("/home/stuart/workspace/build-definitions/task/buildah/0.1/buildah.yaml", &task)
 
+	decodingScheme := runtime.NewScheme()
+	utilruntime.Must(pipelinev1beta1.AddToScheme(decodingScheme))
 	convertToSsh(&task)
-	println("\n")
-
+	y := printers.YAMLPrinter{}
+	b := bytes.Buffer{}
+	_ = y.PrintObj(&task, &b)
+	err := os.WriteFile("/home/stuart/workspace/build-definitions/task/buildah-remote/0.1/buildah-remote.yaml", b.Bytes(), 0660)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func decodeBytesToTektonObjbytes(bytes []byte, obj runtime.Object) runtime.Object {
