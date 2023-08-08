@@ -186,11 +186,12 @@ mkdir -p ~/.ssh
 cp /ssh/id_rsa ~/.ssh
 chmod 0400 ~/.ssh/id_rsa
 export SSH_HOST=ec2-user@ec2-44-202-128-18.compute-1.amazonaws.com
+export SSH_HOST=$(cat /ssh/host)
+export BUILD_DIR=$(cat /ssh/build-dir)
+export BUILD_ID=$(context.pipelineRun.name)
 export SSH_ARGS="-o StrictHostKeyChecking=no"
-export BUILD_ID=tmpbuildid
-export BUILD_DIR=/tmp/fakebuild
 mkdir -p scripts
-ssh $SSH_ARGS $SSH_HOST sudo rm -r $BUILD_DIR
+ssh $SSH_ARGS $SSH_HOST sudo rm -rf $BUILD_DIR
 ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
 		//before the build we sync the contents of the workspace to the remote host
 		for _, workspace := range task.Spec.Workspaces {
@@ -251,24 +252,18 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
 	}
 
 	task.Name = "buildah-remote"
+	task.Labels["build.appstudio.redhat.com/multi-arch-required"] = "true"
+
+	faleVar := false
 	task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
 		Name: "ssh",
 		VolumeSource: v1.VolumeSource{
 			Secret: &v1.SecretVolumeSource{
-				SecretName: "ssh",
+				SecretName: "multi-arch-ssl-$(context.taskRun.name)",
+				Optional:   &faleVar,
 			},
 		},
 	})
-	//faleVar := false
-	//task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
-	//	Name: "ssh2",
-	//	VolumeSource: v1.VolumeSource{
-	//		Secret: &v1.SecretVolumeSource{
-	//			SecretName: "ssl-$(context.taskRun.name)",
-	//			Optional:   &faleVar,
-	//		},
-	//	},
-	//})
 }
 
 func replaceImage(image string) string {
