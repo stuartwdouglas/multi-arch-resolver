@@ -208,6 +208,7 @@ ssh $SSH_ARGS $SSH_HOST  mkdir -p $BUILD_DIR/workspaces $BUILD_DIR/scripts`
 			ret += "cd " + step.WorkingDir + " && ls -l\n"
 
 		}
+
 		ret += step.Script
 		ret += "\nbuildah push $IMAGE oci:rhtap-final-image"
 		ret += "\nREMOTESSHEOF"
